@@ -1,13 +1,20 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext.jsx'
-import { workService } from '../../services/business.js'
-import { REVIEW_STATUS_TEXT } from '../../data/storage.js'
+import { workService, bookingService } from '../../services/business.js'
+import { REVIEW_STATUS_TEXT, INACTIVE_REASON_TEXT } from '../../data/storage.js'
 
 export default function WorkReview() {
-  const { works, bookings, paints, seats, refreshWorks, refreshBookings, showNotification } = useApp()
+  const { works, bookings, paints, seats, refreshWorks, refreshBookings, refreshPaints, showNotification } = useApp()
   const [filter, setFilter] = useState('all')
   const [reviewingWork, setReviewingWork] = useState(null)
-  const [reviewForm, setReviewForm] = useState({ teacherComment: '', score: null })
+  const [reviewForm, setReviewForm] = useState({
+    teacherComment: '',
+    score: null,
+    paintUsage: [],
+    extraFeeRequired: false,
+    extraFeeAmount: 0,
+    extraFeeNote: '',
+  })
 
   const sortedWorks = [...works].sort((a, b) => {
     if (a.reviewStatus !== b.reviewStatus) {
@@ -26,24 +33,80 @@ export default function WorkReview() {
   const getPaint = (id) => paints.find(p => p.id === id)
 
   const handleOpenReview = (work) => {
+    const booking = getBooking(work.bookingId)
+    const paintIds = booking ? booking.paintIds : []
+    const existingUsage = booking && booking.paintUsage ? booking.paintUsage : []
+
+    const paintUsage = paintIds.map(pid => {
+      const existing = existingUsage.find(u => u.paintId === pid)
+      return {
+        paintId: pid,
+        amount: existing ? existing.amount : 0,
+      }
+    })
+
     setReviewingWork(work)
     setReviewForm({
       teacherComment: work.teacherComment || '',
       score: work.score !== null ? work.score : null,
+      paintUsage,
+      extraFeeRequired: booking ? booking.extraFeeRequired || false : false,
+      extraFeeAmount: booking ? booking.extraFeeAmount || 0 : 0,
+      extraFeeNote: booking ? booking.extraFeeNote || '' : '',
     })
   }
 
   const handleCloseReview = () => {
     setReviewingWork(null)
-    setReviewForm({ teacherComment: '', score: null })
+    setReviewForm({
+      teacherComment: '',
+      score: null,
+      paintUsage: [],
+      extraFeeRequired: false,
+      extraFeeAmount: 0,
+      extraFeeNote: '',
+    })
   }
+
+  const handleUsageChange = (paintId, value) => {
+    const amount = Math.max(0, Number(value) || 0)
+    setReviewForm(prev => {
+      const newUsage = prev.paintUsage.map(u =>
+        u.paintId === paintId ? { ...u, amount } : u
+      )
+      return { ...prev, paintUsage: newUsage }
+    })
+  }
+
+  const calculatedFee = useMemo(() => {
+    return bookingService.calculateExtraFee(reviewForm.paintUsage.filter(u => u.amount > 0))
+  }, [reviewForm.paintUsage])
 
   const handleReviewSubmit = (e) => {
     e.preventDefault()
     try {
-      workService.reviewWork(reviewingWork.id, reviewForm)
+      const validUsage = reviewForm.paintUsage.filter(u => u.amount > 0)
+      workService.reviewWork(reviewingWork.id, {
+        teacherComment: reviewForm.teacherComment,
+        score: reviewForm.score,
+        paintUsage: validUsage,
+        extraFeeRequired: reviewForm.extraFeeRequired,
+        extraFeeAmount: reviewForm.extraFeeRequired ? reviewForm.extraFeeAmount : 0,
+        extraFeeNote: reviewForm.extraFeeRequired ? reviewForm.extraFeeNote : '',
+      })
+
+      validUsage.forEach(usage => {
+        try {
+          workService.updateStock(usage.paintId, -usage.amount)
+        } catch (e) {
+          console.warn('扣减库存失败:', e.message)
+        }
+      })
+
       refreshWorks()
-      showNotification('作品评审完成', 'success')
+      refreshBookings()
+      refreshPaints()
+      showNotification('作品评审完成，材料耗用已记录', 'success')
       handleCloseReview()
     } catch (err) {
       showNotification(err.message, 'error')
@@ -54,6 +117,8 @@ export default function WorkReview() {
     ? (works.filter(w => w.score !== null).reduce((s, w) => s + w.score, 0) /
        works.filter(w => w.score !== null).length).toFixed(1)
     : '-'
+
+  const pendingExtraFeeCount = bookings.filter(b => b.extraFeeRequired && b.status === 'completed').length
 
   return (
     <div className="module-container">
@@ -98,6 +163,10 @@ export default function WorkReview() {
           <div className="stat-number">{avgScore}</div>
           <div className="stat-label">平均分</div>
         </div>
+        <div className="stat-card stat-red">
+          <div className="stat-number">{pendingExtraFeeCount}</div>
+          <div className="stat-label">待补缴费用</div>
+        </div>
       </div>
 
       {filteredWorks.length === 0 ? (
@@ -115,6 +184,8 @@ export default function WorkReview() {
                 <th>学员</th>
                 <th>课程信息</th>
                 <th>提交时间</th>
+                <th>材料耗用</th>
+                <th>费用</th>
                 <th>状态</th>
                 <th>评分</th>
                 <th>操作</th>
@@ -124,6 +195,7 @@ export default function WorkReview() {
               {filteredWorks.map(work => {
                 const booking = getBooking(work.bookingId)
                 const workPaints = booking ? booking.paintIds.map(id => getPaint(id)).filter(Boolean) : []
+                const hasExtraFee = booking && booking.extraFeeRequired
 
                 return (
                   <tr key={work.id} className={`work-row status-${work.reviewStatus}`}>
@@ -168,7 +240,34 @@ export default function WorkReview() {
                       )}
                     </td>
                     <td>
-                      {new Date(work.submitTime).toLocaleString('zh-CN')}
+                      <div>{new Date(work.submitTime).toLocaleDateString('zh-CN')}</div>
+                      <div className="muted-text-sm">{new Date(work.submitTime).toLocaleTimeString('zh-CN')}</div>
+                    </td>
+                    <td>
+                      {booking && booking.paintUsage && booking.paintUsage.length > 0 ? (
+                        <div>
+                          {booking.paintUsage.slice(0, 2).map(u => {
+                            const p = getPaint(u.paintId)
+                            return p ? (
+                              <div key={u.paintId} className="muted-text-sm">
+                                {p.name} × {u.amount}{p.unit}
+                              </div>
+                            ) : null
+                          })}
+                          {booking.paintUsage.length > 2 && (
+                            <div className="muted-text-sm">+{booking.paintUsage.length - 2}项</div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="muted-text">未记录</span>
+                      )}
+                    </td>
+                    <td>
+                      {hasExtraFee ? (
+                        <span className="tag tag-danger">¥{booking.extraFeeAmount}</span>
+                      ) : (
+                        <span className="muted-text">-</span>
+                      )}
                     </td>
                     <td>
                       <span className={`tag tag-${work.reviewStatus}`}>
@@ -234,8 +333,16 @@ export default function WorkReview() {
                             <span className="muted-text">|</span>
                             <span>💺 {seatStr}</span>
                           </div>
+                          <div className="review-meta-row">
+                            <span>⏰ 预约时间：{b.date} {b.timeSlot}</span>
+                          </div>
+                          {b.workSubmitted && (
+                            <div className="alert alert-info" style={{ marginTop: '8px', padding: '8px 12px' }}>
+                              🔒 作品已提交，预约信息已锁定，如需调整时间请取消后重新预约
+                            </div>
+                          )}
                           {ps.length > 0 && (
-                            <div className="paint-tags">
+                            <div className="paint-tags" style={{ marginTop: '8px' }}>
                               {ps.map(paint => (
                                 <span key={paint.id} className="paint-tag">
                                   <span
@@ -261,6 +368,101 @@ export default function WorkReview() {
               </div>
 
               <form onSubmit={handleReviewSubmit} style={{ marginTop: '20px' }}>
+                <div className="section-label">📦 材料耗用登记</div>
+                <div className="card" style={{ marginBottom: '16px', padding: '12px' }}>
+                  {reviewForm.paintUsage.length === 0 ? (
+                    <div className="muted-text">本次预约未选择颜料</div>
+                  ) : (
+                    <div className="usage-table">
+                      {reviewForm.paintUsage.map(usage => {
+                        const paint = getPaint(usage.paintId)
+                        if (!paint) return null
+                        return (
+                          <div key={usage.paintId} className="usage-row">
+                            <div className="usage-paint-info">
+                              <span
+                                className="color-swatch"
+                                style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
+                              />
+                              <span className="font-medium">{paint.name}</span>
+                              <span className="muted-text-sm">
+                                （库存：{paint.stock}{paint.unit}，¥{paint.price}/{paint.unit}）
+                              </span>
+                            </div>
+                            <div className="usage-input-group">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                className="input input-sm"
+                                style={{ width: '100px' }}
+                                value={usage.amount}
+                                onChange={e => handleUsageChange(usage.paintId, e.target.value)}
+                              />
+                              <span className="muted-text-sm" style={{ marginLeft: '6px' }}>{paint.unit}</span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {reviewForm.paintUsage.length > 0 && (
+                    <div className="usage-summary">
+                      <span className="muted-text">材料费用估算：</span>
+                      <span className="font-medium" style={{ color: calculatedFee > 0 ? '#e74c3c' : '#666' }}>
+                        ¥{calculatedFee.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="section-label">💰 补缴耗材费</div>
+                <div className="card" style={{ marginBottom: '16px', padding: '12px' }}>
+                  <div className="form-row" style={{ alignItems: 'center' }}>
+                    <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <input
+                        type="checkbox"
+                        checked={reviewForm.extraFeeRequired}
+                        onChange={e => setReviewForm(prev => ({ ...prev, extraFeeRequired: e.target.checked }))}
+                      />
+                      <span>需要补缴耗材费</span>
+                    </label>
+                  </div>
+                  {reviewForm.extraFeeRequired && (
+                    <>
+                      <div className="form-row" style={{ marginTop: '12px' }}>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>补缴金额（元）*</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="input"
+                            value={reviewForm.extraFeeAmount}
+                            onChange={e => setReviewForm(prev => ({ ...prev, extraFeeAmount: Number(e.target.value) || 0 }))}
+                            placeholder="请输入金额"
+                          />
+                        </div>
+                        <div className="form-group" style={{ flex: 2 }}>
+                          <label>费用说明</label>
+                          <input
+                            type="text"
+                            className="input"
+                            value={reviewForm.extraFeeNote}
+                            onChange={e => setReviewForm(prev => ({ ...prev, extraFeeNote: e.target.value }))}
+                            placeholder="如：超出套餐用量、特殊耗材等"
+                          />
+                        </div>
+                      </div>
+                      {calculatedFee > 0 && reviewForm.extraFeeAmount === 0 && (
+                        <div className="alert alert-warning" style={{ marginTop: '8px' }}>
+                          💡 根据材料耗用估算费用为 ¥{calculatedFee.toFixed(2)}，可参考此金额设置补缴费用
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
                 <div className="form-row">
                   <div className="form-group" style={{ flex: 1 }}>
                     <label>评分（0-100）</label>

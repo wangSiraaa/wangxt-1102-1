@@ -1629,3 +1629,379 @@ input:checked + .slider:before {
     grid-template-columns: repeat(3, 1fr);
   }
 }
+
+/* ===== Module Tabs ===== */
+.module-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg);
+  padding: 4px;
+  border-radius: var(--radius);
+}
+
+.module-tab {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: all 0.2s;
+  background: transparent;
+}
+
+.module-tab:hover {
+  color: var(--text);
+}
+
+.module-tab.active {
+  background: var(--bg-card);
+  color: var(--primary);
+  box-shadow: var(--shadow);
+}
+
+.module-subheader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+/* ===== Paint Mode Switch ===== */
+.paint-mode-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.paint-mode-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.paint-mode-btn:hover {
+  border-color: var(--primary-light);
+  color: var(--primary);
+}
+
+.paint-mode-btn.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+/* ===== Package Selector ===== */
+.package-selector {
+  margin-top: 8px;
+}
+
+.package-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.package-card {
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--bg-card);
+}
+
+.package-card:hover {
+  border-color: var(--primary-light);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.package-card.selected {
+  border-color: var(--primary);
+  background: #eef2ff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.package-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.package-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.package-price {
+  font-weight: 600;
+  color: var(--primary);
+  font-size: 16px;
+}
+
+.package-desc {
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.package-paints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.package-count {
+  font-weight: 500;
+}
+
+.paint-tag-xs {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+/* ===== Package Admin ===== */
+.package-grid-admin {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.package-card-admin {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  transition: all 0.2s;
+}
+
+.package-card-admin.inactive {
+  opacity: 0.6;
+  background: var(--bg);
+}
+
+.package-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.package-card-title {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.package-card-desc {
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.package-card-meta {
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-size: 13px;
+}
+
+.meta-row .price {
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.package-card-paints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 14px;
+  min-height: 28px;
+}
+
+.package-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ===== Paint Select Grid ===== */
+.paint-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+}
+
+.paint-select-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.paint-select-item:hover {
+  border-color: var(--primary-light);
+}
+
+.paint-select-item.checked {
+  border-color: var(--primary);
+  background: #eef2ff;
+}
+
+.paint-select-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.paint-select-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.paint-select-content .paint-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ===== Booking Lock Info ===== */
+.booking-lock-info {
+  margin: 8px 0;
+}
+
+.booking-package {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.booking-usage {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-light);
+}
+
+.usage-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.usage-tag {
+  background: var(--bg);
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--text);
+  border: 1px solid var(--border-light);
+}
+
+/* ===== Work Usage ===== */
+.work-usage {
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+
+.work-usage-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usage-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.usage-item .usage-name {
+  color: var(--text-muted);
+}
+
+.usage-item .usage-amount {
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* ===== Extra Fee Banner ===== */
+.extra-fee-banner {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+
+.extra-fee-banner.paid {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.extra-fee-text {
+  font-size: 13px;
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.extra-fee-banner.paid .extra-fee-text {
+  color: var(--success);
+}
+
+/* ===== Paint Tag Variants ===== */
+.paint-tag-sm {
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+/* ===== Tab Count ===== */
+.tab-count {
+  background: var(--bg);
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+.tab-btn.active .tab-count {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}

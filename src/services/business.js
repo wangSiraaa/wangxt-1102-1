@@ -1,7 +1,89 @@
-import { storage, CLEAN_STATUS, BOOKING_STATUS, TIME_SLOTS } from '../data/storage.js'
+import { storage, CLEAN_STATUS, BOOKING_STATUS, TIME_SLOTS, INACTIVE_REASON, COURSE_LIST } from '../data/storage.js'
 
 function generateId(prefix) {
   return prefix + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase()
+}
+
+export const paintPackageService = {
+  getAllPackages() {
+    return storage.getPaintPackages()
+  },
+
+  getActivePackages() {
+    return storage.getPaintPackages().filter(p => p.isActive)
+  },
+
+  getPackagesByCourse(course) {
+    return storage.getPaintPackages().filter(p =>
+      p.isActive && p.applicableCourses && p.applicableCourses.includes(course)
+    )
+  },
+
+  getPackageById(packageId) {
+    return storage.getPaintPackages().find(p => p.id === packageId)
+  },
+
+  addPackage(packageData) {
+    const packages = storage.getPaintPackages()
+    const newPackage = {
+      id: generateId('PKG'),
+      name: packageData.name,
+      description: packageData.description || '',
+      paintIds: packageData.paintIds || [],
+      includedAmount: Number(packageData.includedAmount) || 1,
+      price: Number(packageData.price) || 0,
+      applicableCourses: packageData.applicableCourses || [],
+      isActive: packageData.isActive !== undefined ? packageData.isActive : true,
+    }
+    packages.push(newPackage)
+    storage.savePaintPackages(packages)
+    return newPackage
+  },
+
+  updatePackage(packageId, updates) {
+    const packages = storage.getPaintPackages()
+    const index = packages.findIndex(p => p.id === packageId)
+    if (index === -1) throw new Error('颜料套餐不存在')
+    packages[index] = { ...packages[index], ...updates }
+    storage.savePaintPackages(packages)
+    return packages[index]
+  },
+
+  deletePackage(packageId) {
+    const packages = storage.getPaintPackages()
+    const newPackages = packages.filter(p => p.id !== packageId)
+    storage.savePaintPackages(newPackages)
+  },
+
+  toggleActive(packageId) {
+    const pkg = this.getPackageById(packageId)
+    if (!pkg) throw new Error('颜料套餐不存在')
+    return this.updatePackage(packageId, { isActive: !pkg.isActive })
+  },
+
+  checkPackageAvailable(packageId, course = null) {
+    const problems = []
+    const pkg = this.getPackageById(packageId)
+    if (!pkg) {
+      problems.push('颜料套餐不存在')
+      return problems
+    }
+    if (!pkg.isActive) {
+      problems.push(`${pkg.name} 套餐已停用`)
+    }
+    if (course && pkg.applicableCourses && !pkg.applicableCourses.includes(course)) {
+      problems.push(`${pkg.name} 套餐不适用于「${course}」课程`)
+    }
+    const paintProblems = paintService.checkPaintsAvailable(pkg.paintIds, course)
+    problems.push(...paintProblems)
+    return problems
+  },
+
+  getPackagePaints(packageId) {
+    const pkg = this.getPackageById(packageId)
+    if (!pkg) return []
+    return pkg.paintIds.map(id => paintService.getPaintById(id)).filter(Boolean)
+  },
 }
 
 export const seatService = {
@@ -14,6 +96,11 @@ export const seatService = {
     return seats.filter(s => s.isActive && s.cleanStatus === CLEAN_STATUS.CLEANED)
   },
 
+  getInactiveSeats() {
+    const seats = storage.getSeats()
+    return seats.filter(s => !s.isActive)
+  },
+
   addSeat(seatData) {
     const seats = storage.getSeats()
     const newSeat = {
@@ -22,6 +109,8 @@ export const seatService = {
       location: seatData.location || '',
       cleanStatus: CLEAN_STATUS.CLEANED,
       isActive: true,
+      inactiveReason: '',
+      inactiveNote: '',
     }
     seats.push(newSeat)
     storage.saveSeats(seats)
@@ -58,7 +147,34 @@ export const seatService = {
     const seats = storage.getSeats()
     const seat = seats.find(s => s.id === seatId)
     if (!seat) throw new Error('座位不存在')
-    return this.updateSeat(seatId, { isActive: !seat.isActive })
+    const updates = { isActive: !seat.isActive }
+    if (seat.isActive) {
+      updates.inactiveReason = updates.inactiveReason || INACTIVE_REASON.OTHER
+    } else {
+      updates.inactiveReason = ''
+      updates.inactiveNote = ''
+    }
+    return this.updateSeat(seatId, updates)
+  },
+
+  setInactiveWithReason(seatId, reason, note = '') {
+    const validReasons = Object.values(INACTIVE_REASON)
+    if (!validReasons.includes(reason)) {
+      throw new Error('无效的停用原因')
+    }
+    return this.updateSeat(seatId, {
+      isActive: false,
+      inactiveReason: reason,
+      inactiveNote: note,
+    })
+  },
+
+  setActive(seatId) {
+    return this.updateSeat(seatId, {
+      isActive: true,
+      inactiveReason: '',
+      inactiveNote: '',
+    })
   },
 }
 
@@ -70,6 +186,11 @@ export const paintService = {
   getLowStockPaints() {
     const paints = storage.getPaints()
     return paints.filter(p => p.stock <= p.threshold)
+  },
+
+  getRestrictedPaints() {
+    const paints = storage.getPaints()
+    return paints.filter(p => p.restrictedCourses && p.restrictedCourses.length > 0)
   },
 
   getPaintById(paintId) {
@@ -87,6 +208,7 @@ export const paintService = {
       unit: paintData.unit || '管',
       threshold: Number(paintData.threshold) || 10,
       price: Number(paintData.price) || 0,
+      restrictedCourses: paintData.restrictedCourses || [],
     }
     paints.push(newPaint)
     storage.savePaints(paints)
@@ -119,16 +241,45 @@ export const paintService = {
     return paints[index]
   },
 
-  checkPaintsAvailable(paintIds) {
+  updateRestrictedCourses(paintId, restrictedCourses) {
+    const invalidCourses = restrictedCourses.filter(c => !COURSE_LIST.includes(c))
+    if (invalidCourses.length > 0) {
+      throw new Error(`无效的课程：${invalidCourses.join('、')}`)
+    }
+    return this.updatePaint(paintId, { restrictedCourses })
+  },
+
+  checkPaintsAvailable(paintIds, course = null) {
     const problems = []
     paintIds.forEach(pid => {
       const paint = this.getPaintById(pid)
       if (!paint) {
         problems.push(`颜料ID:${pid} 不存在`)
-      } else if (paint.stock <= 0) {
-        problems.push(`${paint.name} 库存为0`)
-      } else if (paint.stock <= paint.threshold) {
-        problems.push(`${paint.name} 库存不足（剩余${paint.stock}${paint.unit}，低于阈值${paint.threshold}${paint.unit}）`)
+      } else {
+        if (paint.stock <= 0) {
+          problems.push(`${paint.name} 库存为0`)
+        } else if (paint.stock <= paint.threshold) {
+          problems.push(`${paint.name} 库存不足（剩余${paint.stock}${paint.unit}，低于阈值${paint.threshold}${paint.unit}）`)
+        }
+        if (course && paint.restrictedCourses && paint.restrictedCourses.includes(course)) {
+          problems.push(`${paint.name} 因库存短缺，暂不支持「${course}」课程使用`)
+        }
+      }
+    })
+    return problems
+  },
+
+  checkPaintsForCourse(paintIds, course) {
+    const problems = []
+    paintIds.forEach(pid => {
+      const paint = this.getPaintById(pid)
+      if (paint && paint.restrictedCourses && paint.restrictedCourses.includes(course)) {
+        problems.push({
+          paintId: pid,
+          paintName: paint.name,
+          course,
+          message: `${paint.name} 因库存短缺，暂不支持「${course}」课程使用`,
+        })
       }
     })
     return problems
@@ -172,20 +323,30 @@ export const bookingService = {
     const seats = storage.getSeats()
     const seat = seats.find(s => s.id === bookingData.seatId)
     if (seat) {
-      if (!seat.isActive) errors.push('该座位已停用')
+      if (!seat.isActive) {
+        const reasonText = seat.inactiveReason ? `（${seat.inactiveReason === 'repair' ? '维修中' : seat.inactiveReason === 'cleaning' ? '深度清洁中' : '其他原因'}）` : ''
+        errors.push(`该座位已停用${reasonText}${seat.inactiveNote ? '：' + seat.inactiveNote : ''}`)
+      }
       if (seat.cleanStatus !== CLEAN_STATUS.CLEANED) {
-        errors.push('该座位尚未清洁完成，不能预约')
+        const statusText = seat.cleanStatus === CLEAN_STATUS.DIRTY ? '待清洁' : '清洁中'
+        errors.push(`该座位${statusText}，请等待清洁完成后再预约`)
       }
     }
 
-    const paintIssues = paintService.checkPaintsAvailable(bookingData.paintIds || [])
-    if (paintIssues.length > 0) {
-      errors.push(...paintIssues)
+    if (bookingData.paintPackageId) {
+      const packageProblems = paintPackageService.checkPackageAvailable(bookingData.paintPackageId, bookingData.course)
+      if (packageProblems.length > 0) {
+        errors.push(...packageProblems)
+      }
+    } else {
+      const paintIssues = paintService.checkPaintsAvailable(bookingData.paintIds || [], bookingData.course)
+      if (paintIssues.length > 0) {
+        errors.push(...paintIssues)
+      }
     }
 
     if (bookingData.seatId && bookingData.date && bookingData.timeSlot) {
       const occupied = this.getOccupiedSeats(bookingData.date, bookingData.timeSlot)
-      const isExcluded = excludeBookingId && occupied.includes(bookingData.seatId)
       const existingBooking = excludeBookingId
         ? storage.getBookings().find(
             b => b.seatId === bookingData.seatId &&
@@ -208,6 +369,14 @@ export const bookingService = {
     const errors = this.validateBooking(bookingData)
     if (errors.length > 0) throw new Error(errors.join('；'))
 
+    let paintIds = bookingData.paintIds || []
+    if (bookingData.paintPackageId) {
+      const pkg = paintPackageService.getPackageById(bookingData.paintPackageId)
+      if (pkg) {
+        paintIds = pkg.paintIds
+      }
+    }
+
     const bookings = storage.getBookings()
     const newBooking = {
       id: generateId('B'),
@@ -217,10 +386,15 @@ export const bookingService = {
       date: bookingData.date,
       timeSlot: bookingData.timeSlot,
       course: bookingData.course,
-      paintIds: bookingData.paintIds || [],
+      paintPackageId: bookingData.paintPackageId || null,
+      paintIds: paintIds,
       status: BOOKING_STATUS.BOOKED,
       workSubmitted: false,
       workId: null,
+      paintUsage: [],
+      extraFeeRequired: false,
+      extraFeeAmount: 0,
+      extraFeeNote: '',
       createTime: new Date().toISOString(),
     }
     bookings.push(newBooking)
@@ -236,7 +410,7 @@ export const bookingService = {
     const original = bookings[index]
 
     if (original.workSubmitted && (updates.date || updates.timeSlot || updates.seatId)) {
-      throw new Error('作品已提交，不能修改预约时间和座位')
+      throw new Error('作品已提交，不能修改预约时间和座位。如需调整，请先取消此预约后重新预约。')
     }
 
     const merged = { ...original, ...updates }
@@ -268,18 +442,68 @@ export const bookingService = {
     if (index === -1) throw new Error('预约不存在')
     bookings[index].status = BOOKING_STATUS.COMPLETED
     storage.saveBookings(bookings)
+    try {
+      seatService.setCleanStatus(bookings[index].seatId, CLEAN_STATUS.DIRTY)
+    } catch (e) {
+      console.warn('标记座位为待清洁失败:', e.message)
+    }
     return bookings[index]
   },
 
-  markWorkSubmitted(bookingId, workId) {
+  markWorkSubmitted(bookingId, workId, extraData = {}) {
     const bookings = storage.getBookings()
     const index = bookings.findIndex(b => b.id === bookingId)
     if (index === -1) throw new Error('预约不存在')
     bookings[index].workSubmitted = true
     bookings[index].workId = workId
     bookings[index].status = BOOKING_STATUS.COMPLETED
+    if (extraData.paintUsage) {
+      bookings[index].paintUsage = extraData.paintUsage
+    }
+    if (extraData.extraFeeRequired !== undefined) {
+      bookings[index].extraFeeRequired = extraData.extraFeeRequired
+      bookings[index].extraFeeAmount = extraData.extraFeeAmount || 0
+      bookings[index].extraFeeNote = extraData.extraFeeNote || ''
+    }
+    storage.saveBookings(bookings)
+    try {
+      seatService.setCleanStatus(bookings[index].seatId, CLEAN_STATUS.DIRTY)
+    } catch (e) {
+      console.warn('标记座位为待清洁失败:', e.message)
+    }
+    return bookings[index]
+  },
+
+  updateWorkSubmission(bookingId, submissionData) {
+    const bookings = storage.getBookings()
+    const index = bookings.findIndex(b => b.id === bookingId)
+    if (index === -1) throw new Error('预约不存在')
+
+    if (!bookings[index].workSubmitted) {
+      throw new Error('该预约尚未提交作品')
+    }
+
+    if (submissionData.paintUsage) {
+      bookings[index].paintUsage = submissionData.paintUsage
+    }
+    if (submissionData.extraFeeRequired !== undefined) {
+      bookings[index].extraFeeRequired = submissionData.extraFeeRequired
+      bookings[index].extraFeeAmount = submissionData.extraFeeAmount || 0
+      bookings[index].extraFeeNote = submissionData.extraFeeNote || ''
+    }
     storage.saveBookings(bookings)
     return bookings[index]
+  },
+
+  calculateExtraFee(paintUsage) {
+    let total = 0
+    paintUsage.forEach(usage => {
+      const paint = paintService.getPaintById(usage.paintId)
+      if (paint && usage.amount > 0) {
+        total += paint.price * usage.amount
+      }
+    })
+    return Math.round(total * 100) / 100
   },
 }
 
@@ -300,7 +524,7 @@ export const workService = {
     return storage.getWorks().find(w => w.bookingId === bookingId)
   },
 
-  submitWork(workData) {
+  submitWork(workData, submissionExtra = {}) {
     const works = storage.getWorks()
     const newWork = {
       id: generateId('W'),
@@ -317,18 +541,30 @@ export const workService = {
     }
     works.push(newWork)
     storage.saveWorks(works)
-    bookingService.markWorkSubmitted(workData.bookingId, newWork.id)
+    bookingService.markWorkSubmitted(workData.bookingId, newWork.id, submissionExtra)
     return newWork
   },
 
-  reviewWork(workId, { teacherComment, score }) {
+  reviewWork(workId, reviewData) {
     const works = storage.getWorks()
     const index = works.findIndex(w => w.id === workId)
     if (index === -1) throw new Error('作品不存在')
-    works[index].teacherComment = teacherComment || works[index].teacherComment
-    works[index].score = score !== undefined ? score : works[index].score
+
+    works[index].teacherComment = reviewData.teacherComment !== undefined ? reviewData.teacherComment : works[index].teacherComment
+    works[index].score = reviewData.score !== undefined ? reviewData.score : works[index].score
     works[index].reviewStatus = 'reviewed'
     storage.saveWorks(works)
+
+    if (reviewData.paintUsage || reviewData.extraFeeRequired !== undefined) {
+      const work = works[index]
+      bookingService.updateWorkSubmission(work.bookingId, {
+        paintUsage: reviewData.paintUsage,
+        extraFeeRequired: reviewData.extraFeeRequired,
+        extraFeeAmount: reviewData.extraFeeAmount,
+        extraFeeNote: reviewData.extraFeeNote,
+      })
+    }
+
     return works[index]
   },
 }

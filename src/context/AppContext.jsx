@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback } from 'react'
 import {
   seatService,
   paintService,
+  paintPackageService,
   bookingService,
   workService,
 } from '../services/business.js'
@@ -11,6 +12,7 @@ const AppContext = createContext(null)
 export function AppProvider({ children }) {
   const [seats, setSeats] = useState(() => seatService.getAllSeats())
   const [paints, setPaints] = useState(() => paintService.getAllPaints())
+  const [paintPackages, setPaintPackages] = useState(() => paintPackageService.getAllPackages())
   const [bookings, setBookings] = useState(() => bookingService.getAllBookings())
   const [works, setWorks] = useState(() => workService.getAllWorks())
   const [currentRole, setCurrentRole] = useState('student')
@@ -28,6 +30,10 @@ export function AppProvider({ children }) {
     setPaints(paintService.getAllPaints())
   }, [])
 
+  const refreshPaintPackages = useCallback(() => {
+    setPaintPackages(paintPackageService.getAllPackages())
+  }, [])
+
   const refreshBookings = useCallback(() => {
     setBookings(bookingService.getAllBookings())
   }, [])
@@ -39,9 +45,10 @@ export function AppProvider({ children }) {
   const refreshAll = useCallback(() => {
     refreshSeats()
     refreshPaints()
+    refreshPaintPackages()
     refreshBookings()
     refreshWorks()
-  }, [refreshSeats, refreshPaints, refreshBookings, refreshWorks])
+  }, [refreshSeats, refreshPaints, refreshPaintPackages, refreshBookings, refreshWorks])
 
   const showNotification = useCallback((message, type = 'info') => {
     setNotification({ message, type, id: Date.now() })
@@ -51,6 +58,7 @@ export function AppProvider({ children }) {
   const value = {
     seats,
     paints,
+    paintPackages,
     bookings,
     works,
     currentRole,
@@ -61,6 +69,7 @@ export function AppProvider({ children }) {
     showNotification,
     refreshSeats,
     refreshPaints,
+    refreshPaintPackages,
     refreshBookings,
     refreshWorks,
     refreshAll,

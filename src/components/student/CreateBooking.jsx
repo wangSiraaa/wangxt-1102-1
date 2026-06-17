@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext.jsx'
-import { bookingService, paintService } from '../../services/business.js'
+import { bookingService, paintService, paintPackageService } from '../../services/business.js'
 import { TIME_SLOTS, COURSE_LIST, CLEAN_STATUS } from '../../data/storage.js'
 
 export default function CreateBooking() {
-  const { seats, paints, currentStudent, refreshBookings, showNotification } = useApp()
+  const { seats, paints, paintPackages, currentStudent, refreshBookings, refreshSeats, showNotification } = useApp()
 
   const today = new Date().toISOString().split('T')[0]
 
@@ -13,11 +13,30 @@ export default function CreateBooking() {
     timeSlot: TIME_SLOTS[0],
     seatId: '',
     course: COURSE_LIST[0],
+    paintPackageId: '',
     paintIds: [],
   })
 
-  const [selectedPaintsDetail, setSelectedPaintsDetail] = useState([])
   const [showPaintPicker, setShowPaintPicker] = useState(false)
+  const [paintMode, setPaintMode] = useState('package')
+
+  const availablePackages = useMemo(() => {
+    return paintPackages.filter(p =>
+      p.isActive && p.applicableCourses && p.applicableCourses.includes(formData.course)
+    )
+  }, [paintPackages, formData.course])
+
+  const selectedPackage = useMemo(() => {
+    if (!formData.paintPackageId) return null
+    return paintPackages.find(p => p.id === formData.paintPackageId)
+  }, [paintPackages, formData.paintPackageId])
+
+  const selectedPaintsDetail = useMemo(() => {
+    if (formData.paintPackageId && selectedPackage) {
+      return selectedPackage.paintIds.map(id => paints.find(p => p.id === id)).filter(Boolean)
+    }
+    return paints.filter(p => formData.paintIds.includes(p.id))
+  }, [paints, formData.paintIds, formData.paintPackageId, selectedPackage])
 
   const availableSeats = useMemo(() => {
     const occupied = bookingService.getOccupiedSeats(formData.date, formData.timeSlot)
@@ -32,6 +51,30 @@ export default function CreateBooking() {
     return paints.filter(p => p.stock <= p.threshold)
   }, [paints])
 
+  const handleCourseChange = (course) => {
+    setFormData(prev => {
+      const newData = { ...prev, course }
+      const pkgForCourse = paintPackages.find(p =>
+        p.isActive && p.applicableCourses && p.applicableCourses.includes(course)
+      )
+      if (pkgForCourse) {
+        newData.paintPackageId = pkgForCourse.id
+        newData.paintIds = []
+      } else {
+        newData.paintPackageId = ''
+      }
+      return newData
+    })
+  }
+
+  const handlePackageSelect = (packageId) => {
+    setFormData(prev => ({
+      ...prev,
+      paintPackageId: packageId,
+      paintIds: [],
+    }))
+  }
+
   const handlePaintToggle = (paintId) => {
     let newIds
     if (formData.paintIds.includes(paintId)) {
@@ -39,8 +82,16 @@ export default function CreateBooking() {
     } else {
       newIds = [...formData.paintIds, paintId]
     }
-    setFormData({ ...formData, paintIds: newIds })
-    setSelectedPaintsDetail(paints.filter(p => newIds.includes(p.id)))
+    setFormData({ ...formData, paintIds: newIds, paintPackageId: '' })
+  }
+
+  const handleSwitchMode = (mode) => {
+    setPaintMode(mode)
+    if (mode === 'package' && availablePackages.length > 0) {
+      setFormData(prev => ({ ...prev, paintPackageId: availablePackages[0].id, paintIds: [] }))
+    } else if (mode === 'custom') {
+      setFormData(prev => ({ ...prev, paintPackageId: '' }))
+    }
   }
 
   const handleSubmit = (e) => {
@@ -52,15 +103,17 @@ export default function CreateBooking() {
         studentName: currentStudent.name,
       })
       refreshBookings()
+      refreshSeats()
       showNotification('预约成功！', 'success')
       setFormData({
         date: today,
         timeSlot: TIME_SLOTS[0],
         seatId: '',
         course: COURSE_LIST[0],
+        paintPackageId: '',
         paintIds: [],
       })
-      setSelectedPaintsDetail([])
+      setPaintMode('package')
     } catch (err) {
       showNotification(err.message, 'error')
     }
@@ -115,7 +168,7 @@ export default function CreateBooking() {
           <select
             className="input"
             value={formData.course}
-            onChange={e => setFormData({ ...formData, course: e.target.value })}
+            onChange={e => handleCourseChange(e.target.value)}
           >
             {COURSE_LIST.map(course => (
               <option key={course} value={course}>{course}</option>
@@ -161,36 +214,97 @@ export default function CreateBooking() {
         </div>
 
         <div className="form-group">
-          <label>所需颜料</label>
-          <div
-            className="paint-selected-area"
-            onClick={() => setShowPaintPicker(true)}
-          >
-            {selectedPaintsDetail.length === 0 ? (
-              <span className="muted-text">点击选择需要使用的颜料（可选）</span>
-            ) : (
-              <div className="paint-tags">
-                {selectedPaintsDetail.map(paint => (
-                  <span key={paint.id} className="paint-tag">
-                    <span
-                      className="paint-tag-color"
-                      style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
-                    />
-                    {paint.name}
-                    <span
-                      className="paint-tag-remove"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handlePaintToggle(paint.id)
-                      }}
-                    >
-                      ×
-                    </span>
-                  </span>
-                ))}
-              </div>
-            )}
+          <label>颜料选择</label>
+          <div className="paint-mode-switch">
+            <button
+              type="button"
+              className={`paint-mode-btn ${paintMode === 'package' ? 'active' : ''}`}
+              onClick={() => handleSwitchMode('package')}
+            >
+              📦 颜料套餐
+            </button>
+            <button
+              type="button"
+              className={`paint-mode-btn ${paintMode === 'custom' ? 'active' : ''}`}
+              onClick={() => handleSwitchMode('custom')}
+            >
+              🎨 自选颜料
+            </button>
           </div>
+
+          {paintMode === 'package' && (
+            <div className="package-selector">
+              {availablePackages.length === 0 ? (
+                <div className="empty-hint">该课程暂无可用颜料套餐，可切换到"自选颜料"</div>
+              ) : (
+                <div className="package-grid">
+                  {availablePackages.map(pkg => {
+                    const isSelected = formData.paintPackageId === pkg.id
+                    const pkgPaints = pkg.paintIds.map(id => paints.find(p => p.id === id)).filter(Boolean)
+                    return (
+                      <div
+                        key={pkg.id}
+                        className={`package-card ${isSelected ? 'selected' : ''}`}
+                        onClick={() => handlePackageSelect(pkg.id)}
+                      >
+                        <div className="package-header">
+                          <div className="package-name">{pkg.name}</div>
+                          <div className="package-price">¥{pkg.price}</div>
+                        </div>
+                        <div className="package-desc muted-text-sm">{pkg.description}</div>
+                        <div className="package-paints">
+                          {pkgPaints.slice(0, 4).map(p => (
+                            <span key={p.id} className="paint-tag paint-tag-xs">
+                              <span className="paint-tag-color" style={{ backgroundColor: p.color, border: '1px solid #ddd' }} />
+                              {p.name}
+                            </span>
+                          ))}
+                          {pkgPaints.length > 4 && (
+                            <span className="muted-text-sm">+{pkgPaints.length - 4}</span>
+                          )}
+                        </div>
+                        <div className="package-count muted-text-sm">
+                          含 {pkgPaints.length} 种颜料 × {pkg.includedAmount}{pkgPaints[0]?.unit || '管'}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {paintMode === 'custom' && (
+            <div
+              className="paint-selected-area"
+              onClick={() => setShowPaintPicker(true)}
+            >
+              {selectedPaintsDetail.length === 0 ? (
+                <span className="muted-text">点击选择需要使用的颜料（可选）</span>
+              ) : (
+                <div className="paint-tags">
+                  {selectedPaintsDetail.map(paint => (
+                    <span key={paint.id} className="paint-tag">
+                      <span
+                        className="paint-tag-color"
+                        style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
+                      />
+                      {paint.name}
+                      <span
+                        className="paint-tag-remove"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handlePaintToggle(paint.id)
+                        }}
+                      >
+                        ×
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="form-actions">

@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useApp } from '../../context/AppContext.jsx'
-import { bookingService, seatService, paintService, workService } from '../../services/business.js'
+import { bookingService, seatService, paintService, workService, paintPackageService } from '../../services/business.js'
 import {
   BOOKING_STATUS_TEXT,
   TIME_SLOTS,
@@ -10,12 +10,13 @@ import {
 } from '../../data/storage.js'
 
 export default function MyBookings() {
-  const { bookings, seats, paints, currentStudent, refreshBookings, refreshAll, showNotification } = useApp()
+  const { bookings, seats, paints, paintPackages, currentStudent, refreshBookings, refreshAll, showNotification } = useApp()
   const [editingBooking, setEditingBooking] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [submittingBooking, setSubmittingBooking] = useState(null)
   const [workForm, setWorkForm] = useState({ title: '', description: '' })
   const [filter, setFilter] = useState('all')
+  const [showRebookConfirm, setShowRebookConfirm] = useState(null)
 
   const myBookings = bookings
     .filter(b => b.studentId === currentStudent.id)
@@ -31,6 +32,7 @@ export default function MyBookings() {
 
   const getSeat = (id) => seats.find(s => s.id === id)
   const getPaint = (id) => paints.find(p => p.id === id)
+  const getPackage = (id) => paintPackages.find(p => p.id === id)
 
   const handleCancel = (bookingId) => {
     if (!confirm('确定要取消此预约吗？')) return
@@ -43,6 +45,22 @@ export default function MyBookings() {
     }
   }
 
+  const handleOpenRebook = (booking) => {
+    setShowRebookConfirm(booking)
+  }
+
+  const handleRebook = () => {
+    if (!showRebookConfirm) return
+    try {
+      bookingService.cancelBooking(showRebookConfirm.id)
+      refreshBookings()
+      showNotification('原预约已取消，请重新预约新的时间', 'info')
+      setShowRebookConfirm(null)
+    } catch (err) {
+      showNotification(err.message, 'error')
+    }
+  }
+
   const handleOpenEdit = (booking) => {
     setEditingBooking(booking)
     setEditForm({
@@ -50,6 +68,7 @@ export default function MyBookings() {
       timeSlot: booking.timeSlot,
       seatId: booking.seatId,
       course: booking.course,
+      paintPackageId: booking.paintPackageId || '',
       paintIds: [...booking.paintIds],
     })
   }
@@ -107,7 +126,7 @@ export default function MyBookings() {
         description: workForm.description,
       })
       refreshAll()
-      showNotification('作品提交成功！', 'success')
+      showNotification('作品提交成功！座位已标记为待清洁', 'success')
       handleCloseSubmitWork()
     } catch (err) {
       showNotification(err.message, 'error')
@@ -119,7 +138,24 @@ export default function MyBookings() {
     const newIds = editForm.paintIds.includes(paintId)
       ? editForm.paintIds.filter(id => id !== paintId)
       : [...editForm.paintIds, paintId]
-    setEditForm({ ...editForm, paintIds: newIds })
+    setEditForm({ ...editForm, paintIds: newIds, paintPackageId: '' })
+  }
+
+  const handlePackageSelectInEdit = (packageId) => {
+    if (!editForm) return
+    const pkg = paintPackages.find(p => p.id === packageId)
+    setEditForm({
+      ...editForm,
+      paintPackageId: packageId,
+      paintIds: pkg ? pkg.paintIds : [],
+    })
+  }
+
+  const availablePackagesForEdit = () => {
+    if (!editForm) return []
+    return paintPackages.filter(p =>
+      p.isActive && p.applicableCourses && p.applicableCourses.includes(editForm.course)
+    )
   }
 
   return (
@@ -166,6 +202,7 @@ export default function MyBookings() {
           {filteredBookings.map(booking => {
             const seat = getSeat(booking.seatId)
             const bookingPaints = booking.paintIds.map(id => getPaint(id)).filter(Boolean)
+            const pkg = booking.paintPackageId ? getPackage(booking.paintPackageId) : null
             const canEdit = booking.status === BOOKING_STATUS.BOOKED && !booking.workSubmitted
             const canCancel = booking.status === BOOKING_STATUS.BOOKED && !booking.workSubmitted
             const canSubmitWork = booking.status === BOOKING_STATUS.COMPLETED && !booking.workSubmitted
@@ -184,6 +221,12 @@ export default function MyBookings() {
                     <div className="booking-seat">
                       💺 {seat ? `${seat.name}（${seat.location || '未设位置'}）` : '座位已删除'}
                     </div>
+                    {pkg && (
+                      <div className="booking-package">
+                        📦 {pkg.name}
+                        <span className="muted-text-sm">（套餐）</span>
+                      </div>
+                    )}
                   </div>
                   <div className="booking-status">
                     <span className={`tag tag-${booking.status}`}>
@@ -194,6 +237,9 @@ export default function MyBookings() {
                     )}
                     {!booking.workSubmitted && booking.status === BOOKING_STATUS.COMPLETED && (
                       <span className="tag tag-warning">待交作品</span>
+                    )}
+                    {booking.extraFeeRequired && (
+                      <span className="tag tag-danger">待补缴 ¥{booking.extraFeeAmount}</span>
                     )}
                   </div>
                 </div>
@@ -215,6 +261,30 @@ export default function MyBookings() {
                   </div>
                 )}
 
+                {booking.paintUsage && booking.paintUsage.length > 0 && (
+                  <div className="booking-usage">
+                    <span className="muted-text-sm">📦 材料耗用：</span>
+                    <div className="usage-tags">
+                      {booking.paintUsage.map(u => {
+                        const p = getPaint(u.paintId)
+                        return p ? (
+                          <span key={u.paintId} className="usage-tag">
+                            {p.name} × {u.amount}{p.unit}
+                          </span>
+                        ) : null
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {booking.workSubmitted && (
+                  <div className="booking-lock-info">
+                    <div className="alert alert-info" style={{ margin: 0, padding: '8px 12px' }}>
+                      🔒 作品已提交，预约信息已锁定。如需调整时间，请取消后重新预约。
+                    </div>
+                  </div>
+                )}
+
                 <div className="booking-footer">
                   <span className="muted-text-sm">预约编号：{booking.id}</span>
                   <div className="action-group">
@@ -224,6 +294,14 @@ export default function MyBookings() {
                         onClick={() => handleOpenSubmitWork(booking)}
                       >
                         提交作品
+                      </button>
+                    )}
+                    {booking.workSubmitted && (
+                      <button
+                        className="btn btn-outline btn-sm"
+                        onClick={() => handleOpenRebook(booking)}
+                      >
+                        🔄 改期（取消重约）
                       </button>
                     )}
                     {canEdit && (
@@ -326,7 +404,23 @@ export default function MyBookings() {
               </div>
 
               <div className="form-group">
-                <label>颜料</label>
+                <label>颜料套餐</label>
+                <select
+                  className="input"
+                  value={editForm.paintPackageId || ''}
+                  onChange={e => handlePackageSelectInEdit(e.target.value)}
+                >
+                  <option value="">不使用套餐</option>
+                  {availablePackagesForEdit().map(pkg => (
+                    <option key={pkg.id} value={pkg.id}>
+                      {pkg.name} - ¥{pkg.price}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>自选颜料</label>
                 <div className="paint-tags-edit">
                   {paints.map(paint => {
                     const checked = editForm.paintIds.includes(paint.id)
@@ -399,7 +493,7 @@ export default function MyBookings() {
                 />
               </div>
               <div className="alert alert-warning">
-                ⚠ 作品提交后，将无法再修改此预约信息，请确认无误后提交。
+                ⚠ 作品提交后，座位将自动标记为待清洁，且预约信息将被锁定，无法再修改时间。如需调整时间，请先不要提交作品。
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={handleCloseSubmitWork}>
@@ -410,6 +504,44 @@ export default function MyBookings() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showRebookConfirm && (
+        <div className="modal-overlay" onClick={() => setShowRebookConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>改期确认</h3>
+              <button className="close-btn" onClick={() => setShowRebookConfirm(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="alert alert-warning">
+                <p>由于作品已提交，预约信息已锁定，无法直接修改时间。</p>
+                <p>如需改期，请先取消此预约，然后重新预约新的时间。</p>
+              </div>
+              <div className="booking-info-summary">
+                <p><strong>当前预约：</strong></p>
+                <p>课程：{showRebookConfirm.course}</p>
+                <p>时间：{showRebookConfirm.date} {showRebookConfirm.timeSlot}</p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowRebookConfirm(null)}
+                >
+                  我再想想
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={handleRebook}
+                >
+                  取消原预约并重新预约
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
