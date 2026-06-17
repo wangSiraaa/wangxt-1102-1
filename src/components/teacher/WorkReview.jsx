@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext.jsx'
-import { workService, bookingService } from '../../services/business.js'
+import { workService, bookingService, paintService } from '../../services/business.js'
 import { REVIEW_STATUS_TEXT, INACTIVE_REASON_TEXT } from '../../data/storage.js'
 
 export default function WorkReview() {
@@ -86,6 +86,16 @@ export default function WorkReview() {
     e.preventDefault()
     try {
       const validUsage = reviewForm.paintUsage.filter(u => u.amount > 0)
+
+      const stockIssues = paintService.validatePaintUsage(validUsage)
+      if (stockIssues.length > 0) {
+        const errorMsg = stockIssues.map(issue => `• ${issue.reason}`).join('\n')
+        showNotification(`颜料库存不足，无法提交：\n${errorMsg}`, 'error')
+        return
+      }
+
+      paintService.batchUpdateStock(validUsage, 'consume')
+
       workService.reviewWork(reviewingWork.id, {
         teacherComment: reviewForm.teacherComment,
         score: reviewForm.score,
@@ -95,18 +105,24 @@ export default function WorkReview() {
         extraFeeNote: reviewForm.extraFeeRequired ? reviewForm.extraFeeNote : '',
       })
 
-      validUsage.forEach(usage => {
-        try {
-          workService.updateStock(usage.paintId, -usage.amount)
-        } catch (e) {
-          console.warn('扣减库存失败:', e.message)
-        }
-      })
+      const verifyResult = paintService.verifyStockAfterReview(reviewingWork.bookingId, validUsage)
+      if (!verifyResult.valid) {
+        console.warn('评审后数据一致性校验警告:', verifyResult.issues)
+      }
 
       refreshWorks()
       refreshBookings()
       refreshPaints()
-      showNotification('作品评审完成，材料耗用已记录', 'success')
+
+      let successMsg = '作品评审完成，材料耗用已记录'
+      if (validUsage.length > 0) {
+        const paintNames = validUsage.map(u => {
+          const p = getPaint(u.paintId)
+          return p ? `${p.name}×${u.amount}${p.unit}` : u.paintId
+        }).join('、')
+        successMsg += `\n已扣减库存：${paintNames}`
+      }
+      showNotification(successMsg, 'success')
       handleCloseReview()
     } catch (err) {
       showNotification(err.message, 'error')
@@ -377,24 +393,31 @@ export default function WorkReview() {
                       {reviewForm.paintUsage.map(usage => {
                         const paint = getPaint(usage.paintId)
                         if (!paint) return null
+                        const stockCheck = paintService.checkStockSufficient(usage.paintId, usage.amount)
+                        const isOverStock = usage.amount > 0 && !stockCheck.sufficient
                         return (
-                          <div key={usage.paintId} className="usage-row">
+                          <div key={usage.paintId} className={`usage-row ${isOverStock ? 'usage-row-error' : ''}`}>
                             <div className="usage-paint-info">
                               <span
                                 className="color-swatch"
                                 style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
                               />
                               <span className="font-medium">{paint.name}</span>
-                              <span className="muted-text-sm">
+                              <span className={`muted-text-sm ${isOverStock ? 'text-danger' : ''}`}>
                                 （库存：{paint.stock}{paint.unit}，¥{paint.price}/{paint.unit}）
                               </span>
+                              {isOverStock && (
+                                <span className="text-danger" style={{ marginLeft: '8px', fontSize: '12px', fontWeight: '500' }}>
+                                  ⚠️ {stockCheck.reason}
+                                </span>
+                              )}
                             </div>
                             <div className="usage-input-group">
                               <input
                                 type="number"
                                 min="0"
                                 step="0.5"
-                                className="input input-sm"
+                                className={`input input-sm ${isOverStock ? 'input-error' : ''}`}
                                 style={{ width: '100px' }}
                                 value={usage.amount}
                                 onChange={e => handleUsageChange(usage.paintId, e.target.value)}

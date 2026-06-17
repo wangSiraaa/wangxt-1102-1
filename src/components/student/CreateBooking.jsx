@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext.jsx'
-import { bookingService, paintService, paintPackageService } from '../../services/business.js'
+import { bookingService, paintService } from '../../services/business.js'
 import { TIME_SLOTS, COURSE_LIST, CLEAN_STATUS } from '../../data/storage.js'
 
 export default function CreateBooking() {
-  const { seats, paints, paintPackages, currentStudent, refreshBookings, refreshSeats, showNotification } = useApp()
+  const { seats, paints, currentStudent, refreshBookings, refreshSeats, showNotification } = useApp()
 
   const today = new Date().toISOString().split('T')[0]
 
@@ -13,30 +13,24 @@ export default function CreateBooking() {
     timeSlot: TIME_SLOTS[0],
     seatId: '',
     course: COURSE_LIST[0],
-    paintPackageId: '',
-    paintIds: [],
   })
 
-  const [showPaintPicker, setShowPaintPicker] = useState(false)
-  const [paintMode, setPaintMode] = useState('package')
+  const requiredPaints = useMemo(() => {
+    return paintService.getRequiredPaintsForCourse(formData.course)
+  }, [paints, formData.course])
 
-  const availablePackages = useMemo(() => {
-    return paintPackages.filter(p =>
-      p.isActive && p.applicableCourses && p.applicableCourses.includes(formData.course)
-    )
-  }, [paintPackages, formData.course])
+  const requiredPaintStockStatus = useMemo(() => {
+    return paintService.checkRequiredPaintsStock(formData.course)
+  }, [paints, formData.course])
 
-  const selectedPackage = useMemo(() => {
-    if (!formData.paintPackageId) return null
-    return paintPackages.find(p => p.id === formData.paintPackageId)
-  }, [paintPackages, formData.paintPackageId])
+  const isCoursePaintable = useMemo(() => {
+    const result = paintService.checkCoursePaintable(formData.course)
+    return result.paintable
+  }, [paints, formData.course])
 
-  const selectedPaintsDetail = useMemo(() => {
-    if (formData.paintPackageId && selectedPackage) {
-      return selectedPackage.paintIds.map(id => paints.find(p => p.id === id)).filter(Boolean)
-    }
-    return paints.filter(p => formData.paintIds.includes(p.id))
-  }, [paints, formData.paintIds, formData.paintPackageId, selectedPackage])
+  const coursePaintingInfo = useMemo(() => {
+    return paintService.checkCoursePaintable(formData.course)
+  }, [paints, formData.course])
 
   const availableSeats = useMemo(() => {
     const occupied = bookingService.getOccupiedSeats(formData.date, formData.timeSlot)
@@ -46,53 +40,6 @@ export default function CreateBooking() {
       return isActiveAndClean && isNotOccupied
     })
   }, [seats, formData.date, formData.timeSlot])
-
-  const lowStockPaints = useMemo(() => {
-    return paints.filter(p => p.stock <= p.threshold)
-  }, [paints])
-
-  const handleCourseChange = (course) => {
-    setFormData(prev => {
-      const newData = { ...prev, course }
-      const pkgForCourse = paintPackages.find(p =>
-        p.isActive && p.applicableCourses && p.applicableCourses.includes(course)
-      )
-      if (pkgForCourse) {
-        newData.paintPackageId = pkgForCourse.id
-        newData.paintIds = []
-      } else {
-        newData.paintPackageId = ''
-      }
-      return newData
-    })
-  }
-
-  const handlePackageSelect = (packageId) => {
-    setFormData(prev => ({
-      ...prev,
-      paintPackageId: packageId,
-      paintIds: [],
-    }))
-  }
-
-  const handlePaintToggle = (paintId) => {
-    let newIds
-    if (formData.paintIds.includes(paintId)) {
-      newIds = formData.paintIds.filter(id => id !== paintId)
-    } else {
-      newIds = [...formData.paintIds, paintId]
-    }
-    setFormData({ ...formData, paintIds: newIds, paintPackageId: '' })
-  }
-
-  const handleSwitchMode = (mode) => {
-    setPaintMode(mode)
-    if (mode === 'package' && availablePackages.length > 0) {
-      setFormData(prev => ({ ...prev, paintPackageId: availablePackages[0].id, paintIds: [] }))
-    } else if (mode === 'custom') {
-      setFormData(prev => ({ ...prev, paintPackageId: '' }))
-    }
-  }
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -104,16 +51,13 @@ export default function CreateBooking() {
       })
       refreshBookings()
       refreshSeats()
-      showNotification('预约成功！', 'success')
+      showNotification('预约成功！课程必需颜料已自动分配。', 'success')
       setFormData({
         date: today,
         timeSlot: TIME_SLOTS[0],
         seatId: '',
         course: COURSE_LIST[0],
-        paintPackageId: '',
-        paintIds: [],
       })
-      setPaintMode('package')
     } catch (err) {
       showNotification(err.message, 'error')
     }
@@ -126,10 +70,21 @@ export default function CreateBooking() {
         <span className="muted-text">当前学员：{currentStudent.name}（ID: {currentStudent.id}）</span>
       </div>
 
-      {lowStockPaints.length > 0 && (
+      {requiredPaintStockStatus.length > 0 && (
+        <div className="alert alert-danger">
+          <strong>⛔ 预约拦截：</strong> 所选课程的必需颜料存在问题，暂时无法预约：
+          <ul style={{ margin: '8px 0 0 20px', padding: 0 }}>
+            {requiredPaintStockStatus.map((msg, idx) => (
+              <li key={idx} style={{ marginBottom: '4px' }}>{msg}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {requiredPaintStockStatus.length === 0 && requiredPaints.some(p => p.stock <= p.threshold * 1.5) && (
         <div className="alert alert-warning">
-          <strong>⚠ 提示：</strong>以下颜料库存不足，可能影响预约：
-          {lowStockPaints.map(p => (
+          <strong>⚠ 提示：</strong> 以下课程必需颜料库存偏低，请尽快预约：
+          {requiredPaints.filter(p => p.stock <= p.threshold * 1.5).map(p => (
             <span key={p.id} className="alert-tag">
               {p.name}（剩{p.stock}{p.unit}）
             </span>
@@ -168,12 +123,60 @@ export default function CreateBooking() {
           <select
             className="input"
             value={formData.course}
-            onChange={e => handleCourseChange(e.target.value)}
+            onChange={e => setFormData({ ...formData, course: e.target.value })}
           >
-            {COURSE_LIST.map(course => (
-              <option key={course} value={course}>{course}</option>
-            ))}
+            {COURSE_LIST.map(course => {
+              const info = paintService.checkCoursePaintable(course)
+              return (
+                <option key={course} value={course}>
+                  {course} {!info.paintable ? `（❌${info.reason}）` : ''}
+                </option>
+              )
+            })}
           </select>
+          {!coursePaintingInfo.paintable && (
+            <div className="form-error-message">
+              📛 该课程当前无法预约：{coursePaintingInfo.reason}
+            </div>
+          )}
+        </div>
+
+        <div className="form-group">
+          <label>
+            🎨 课程必需颜料清单
+            <span className="muted-text" style={{ marginLeft: '8px' }}>
+              （共 {requiredPaints.length} 种，系统自动分配，不可更改）
+            </span>
+          </label>
+          <div className="required-paints-box">
+            {requiredPaints.length === 0 ? (
+              <div className="empty-hint">该课程暂未配置必需颜料，请联系管理员</div>
+            ) : (
+              <div className="paint-tags paint-tags-required">
+                {requiredPaints.map(paint => {
+                  const isLow = paint.stock <= paint.threshold
+                  const isOut = paint.stock <= 0
+                  return (
+                    <span
+                      key={paint.id}
+                      className={`paint-tag paint-tag-required ${isOut ? 'tag-danger' : isLow ? 'tag-warning' : ''}`}
+                    >
+                      <span
+                        className="paint-tag-color"
+                        style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
+                      />
+                      <strong>{paint.name}</strong>
+                      <span className="paint-tag-stock">
+                        库存：{paint.stock}{paint.unit}
+                        {isOut && ' ❌缺货'}
+                        {!isOut && isLow && ' ⚠不足'}
+                      </span>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="form-group">
@@ -213,158 +216,17 @@ export default function CreateBooking() {
           )}
         </div>
 
-        <div className="form-group">
-          <label>颜料选择</label>
-          <div className="paint-mode-switch">
-            <button
-              type="button"
-              className={`paint-mode-btn ${paintMode === 'package' ? 'active' : ''}`}
-              onClick={() => handleSwitchMode('package')}
-            >
-              📦 颜料套餐
-            </button>
-            <button
-              type="button"
-              className={`paint-mode-btn ${paintMode === 'custom' ? 'active' : ''}`}
-              onClick={() => handleSwitchMode('custom')}
-            >
-              🎨 自选颜料
-            </button>
-          </div>
-
-          {paintMode === 'package' && (
-            <div className="package-selector">
-              {availablePackages.length === 0 ? (
-                <div className="empty-hint">该课程暂无可用颜料套餐，可切换到"自选颜料"</div>
-              ) : (
-                <div className="package-grid">
-                  {availablePackages.map(pkg => {
-                    const isSelected = formData.paintPackageId === pkg.id
-                    const pkgPaints = pkg.paintIds.map(id => paints.find(p => p.id === id)).filter(Boolean)
-                    return (
-                      <div
-                        key={pkg.id}
-                        className={`package-card ${isSelected ? 'selected' : ''}`}
-                        onClick={() => handlePackageSelect(pkg.id)}
-                      >
-                        <div className="package-header">
-                          <div className="package-name">{pkg.name}</div>
-                          <div className="package-price">¥{pkg.price}</div>
-                        </div>
-                        <div className="package-desc muted-text-sm">{pkg.description}</div>
-                        <div className="package-paints">
-                          {pkgPaints.slice(0, 4).map(p => (
-                            <span key={p.id} className="paint-tag paint-tag-xs">
-                              <span className="paint-tag-color" style={{ backgroundColor: p.color, border: '1px solid #ddd' }} />
-                              {p.name}
-                            </span>
-                          ))}
-                          {pkgPaints.length > 4 && (
-                            <span className="muted-text-sm">+{pkgPaints.length - 4}</span>
-                          )}
-                        </div>
-                        <div className="package-count muted-text-sm">
-                          含 {pkgPaints.length} 种颜料 × {pkg.includedAmount}{pkgPaints[0]?.unit || '管'}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {paintMode === 'custom' && (
-            <div
-              className="paint-selected-area"
-              onClick={() => setShowPaintPicker(true)}
-            >
-              {selectedPaintsDetail.length === 0 ? (
-                <span className="muted-text">点击选择需要使用的颜料（可选）</span>
-              ) : (
-                <div className="paint-tags">
-                  {selectedPaintsDetail.map(paint => (
-                    <span key={paint.id} className="paint-tag">
-                      <span
-                        className="paint-tag-color"
-                        style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
-                      />
-                      {paint.name}
-                      <span
-                        className="paint-tag-remove"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handlePaintToggle(paint.id)
-                        }}
-                      >
-                        ×
-                      </span>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary btn-lg" disabled={availableSeats.length === 0}>
-            确认预约
+          <button
+            type="submit"
+            className="btn btn-primary btn-lg"
+            disabled={availableSeats.length === 0 || !isCoursePaintable}
+          >
+            {!isCoursePaintable ? '必需颜料库存不足，无法预约' :
+             availableSeats.length === 0 ? '无可用座位' : '确认预约'}
           </button>
         </div>
       </form>
-
-      {showPaintPicker && (
-        <div className="modal-overlay" onClick={() => setShowPaintPicker(false)}>
-          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>选择颜料</h3>
-              <button className="close-btn" onClick={() => setShowPaintPicker(false)}>×</button>
-            </div>
-            <div className="modal-body">
-              <div className="paint-grid">
-                {paints.map(paint => {
-                  const checked = formData.paintIds.includes(paint.id)
-                  const isLowStock = paint.stock <= paint.threshold
-                  const isOutOfStock = paint.stock <= 0
-                  return (
-                    <label
-                      key={paint.id}
-                      className={`paint-item ${checked ? 'checked' : ''} ${isOutOfStock ? 'disabled' : ''}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={isOutOfStock}
-                        onChange={() => !isOutOfStock && handlePaintToggle(paint.id)}
-                      />
-                      <div className="paint-item-body">
-                        <div className="paint-item-head">
-                          <div
-                            className="color-swatch-lg"
-                            style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
-                          />
-                          <div>
-                            <div className="paint-item-name">{paint.name}</div>
-                            <div className="muted-text-sm">库存：{paint.stock}{paint.unit}</div>
-                          </div>
-                        </div>
-                        {isOutOfStock && <span className="tag tag-danger">缺货</span>}
-                        {isLowStock && !isOutOfStock && <span className="tag tag-warning">库存不足</span>}
-                      </div>
-                    </label>
-                  )
-                })}
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-primary" onClick={() => setShowPaintPicker(false)}>
-                确定选择
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

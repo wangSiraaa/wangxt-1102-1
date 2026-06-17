@@ -2005,3 +2005,84 @@ input:checked + .slider:before {
   background: rgba(255, 255, 255, 0.2);
   color: white;
 }
+
+/* ===== Stock Validation Styles ===== */
+.text-danger {
+  color: var(--danger);
+}
+
+.usage-row-error {
+  background: #fef2f2;
+  border-radius: 8px;
+  padding: 8px;
+  margin: -8px;
+  margin-bottom: 8px;
+}
+
+.usage-row-error:last-child {
+  margin-bottom: 0;
+}
+
+.input-error {
+  border-color: var(--danger) !important;
+  background: #fff5f5 !important;
+}
+
+.input-error:focus {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important;
+}
+
+/* ===== Required Paints ===== */
+.form-error-message {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.required-paints-box {
+  margin-top: 8px;
+  padding: 14px;
+  background: linear-gradient(135deg, #f8fafc, #ffffff);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+.paint-tags-required {
+  gap: 8px;
+}
+
+.paint-tag-required {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  background: white;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.paint-tag-required.tag-warning {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.paint-tag-required.tag-danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.paint-tag-stock {
+  font-size: 11px;
+  opacity: 0.85;
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(0, 0, 0, 0.1);
+}

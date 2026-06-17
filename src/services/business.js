@@ -1,4 +1,4 @@
-import { storage, CLEAN_STATUS, BOOKING_STATUS, TIME_SLOTS, INACTIVE_REASON, COURSE_LIST } from '../data/storage.js'
+import { storage, CLEAN_STATUS, BOOKING_STATUS, TIME_SLOTS, INACTIVE_REASON, COURSE_LIST, COURSE_REQUIRED_PAINTS } from '../data/storage.js'
 
 function generateId(prefix) {
   return prefix + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase()
@@ -284,6 +284,140 @@ export const paintService = {
     })
     return problems
   },
+
+  checkStockSufficient(paintId, amount) {
+    const paint = this.getPaintById(paintId)
+    if (!paint) {
+      return { sufficient: false, paintId, paintName: paintId, reason: '颜料不存在' }
+    }
+    if (amount <= 0) {
+      return { sufficient: true, paintId, paintName: paint.name }
+    }
+    if (paint.stock < amount) {
+      return {
+        sufficient: false,
+        paintId,
+        paintName: paint.name,
+        reason: `${paint.name} 库存不足（当前：${paint.stock}${paint.unit}，需要：${amount}${paint.unit}）`,
+        currentStock: paint.stock,
+        requiredAmount: amount,
+        unit: paint.unit,
+      }
+    }
+    return { sufficient: true, paintId, paintName: paint.name }
+  },
+
+  validatePaintUsage(paintUsage) {
+    const results = []
+    paintUsage.forEach(usage => {
+      if (usage.amount > 0) {
+        const result = this.checkStockSufficient(usage.paintId, usage.amount)
+        if (!result.sufficient) {
+          results.push(result)
+        }
+      }
+    })
+    return results
+  },
+
+  batchUpdateStock(paintUsage, operation = 'consume') {
+    const multiplier = operation === 'consume' ? -1 : 1
+    const results = []
+    paintUsage.forEach(usage => {
+      if (usage.amount > 0) {
+        const paint = this.updateStock(usage.paintId, multiplier * usage.amount)
+        results.push({
+          paintId: usage.paintId,
+          paintName: paint.name,
+          amount: usage.amount,
+          remainingStock: paint.stock,
+        })
+      }
+    })
+    return results
+  },
+
+  verifyStockAfterReview(bookingId, paintUsage) {
+    const booking = bookingService.getBookingById(bookingId)
+    if (!booking || !booking.paintUsage) {
+      return { valid: false, reason: '预约或材料耗用记录不存在' }
+    }
+
+    const issues = []
+    booking.paintUsage.forEach(usage => {
+      if (usage.amount > 0) {
+        const paint = this.getPaintById(usage.paintId)
+        if (!paint) {
+          issues.push(`颜料ID:${usage.paintId} 不存在`)
+        }
+      }
+    })
+
+    const totalUsageAmount = booking.paintUsage.reduce((sum, u) => sum + (u.amount || 0), 0)
+    const formUsageAmount = paintUsage.reduce((sum, u) => sum + (u.amount || 0), 0)
+    if (Math.abs(totalUsageAmount - formUsageAmount) > 0.001) {
+      issues.push(`材料耗用数量不一致（预约记录：${totalUsageAmount}，提交数据：${formUsageAmount}）`)
+    }
+
+    if (booking.extraFeeRequired !== undefined && booking.extraFeeAmount !== undefined) {
+      if (booking.extraFeeRequired && booking.extraFeeAmount <= 0) {
+        issues.push('补缴费用标记为需要，但金额为0')
+      }
+    }
+
+    return {
+      valid: issues.length === 0,
+      issues,
+      bookingPaintUsage: booking.paintUsage,
+      formPaintUsage: paintUsage,
+      extraFee: {
+        required: booking.extraFeeRequired,
+        amount: booking.extraFeeAmount,
+        note: booking.extraFeeNote,
+      },
+    }
+  },
+
+  getRequiredPaintIdsForCourse(course) {
+    return COURSE_REQUIRED_PAINTS[course] || []
+  },
+
+  getRequiredPaintsForCourse(course) {
+    const ids = this.getRequiredPaintIdsForCourse(course)
+    return ids.map(id => this.getPaintById(id)).filter(Boolean)
+  },
+
+  checkRequiredPaintsStock(course) {
+    const problems = []
+    const requiredIds = this.getRequiredPaintIdsForCourse(course)
+    if (requiredIds.length === 0) {
+      problems.push(`课程「${course}」未配置必需颜料`)
+      return problems
+    }
+    requiredIds.forEach(pid => {
+      const paint = this.getPaintById(pid)
+      if (!paint) {
+        problems.push(`必需颜料ID:${pid} 不存在，请联系管理员配置`)
+      } else if (paint.stock <= 0) {
+        problems.push(`📛 必需颜料「${paint.name}」缺货（库存为0），无法预约「${course}」课程`)
+      } else if (paint.stock <= paint.threshold) {
+        problems.push(`📛 必需颜料「${paint.name}」库存不足（剩余${paint.stock}${paint.unit}，低于阈值${paint.threshold}${paint.unit}），无法预约「${course}」课程`)
+      }
+    })
+    return problems
+  },
+
+  checkCoursePaintable(course) {
+    const requiredIds = this.getRequiredPaintIdsForCourse(course)
+    if (requiredIds.length === 0) return { paintable: false, reason: '课程未配置必需颜料' }
+    for (const pid of requiredIds) {
+      const paint = this.getPaintById(pid)
+      if (!paint) return { paintable: false, reason: `必需颜料ID:${pid} 不存在` }
+      if (paint.stock <= 0) return { paintable: false, reason: `必需颜料「${paint.name}」缺货`, paint }
+      if (paint.stock <= paint.threshold) return { paintable: false, reason: `必需颜料「${paint.name}」库存不足`, paint }
+    }
+    return { paintable: true }
+  },
 }
 
 export const bookingService = {
@@ -333,15 +467,10 @@ export const bookingService = {
       }
     }
 
-    if (bookingData.paintPackageId) {
-      const packageProblems = paintPackageService.checkPackageAvailable(bookingData.paintPackageId, bookingData.course)
-      if (packageProblems.length > 0) {
-        errors.push(...packageProblems)
-      }
-    } else {
-      const paintIssues = paintService.checkPaintsAvailable(bookingData.paintIds || [], bookingData.course)
-      if (paintIssues.length > 0) {
-        errors.push(...paintIssues)
+    if (bookingData.course) {
+      const requiredStockIssues = paintService.checkRequiredPaintsStock(bookingData.course)
+      if (requiredStockIssues.length > 0) {
+        errors.push(...requiredStockIssues)
       }
     }
 
@@ -369,13 +498,7 @@ export const bookingService = {
     const errors = this.validateBooking(bookingData)
     if (errors.length > 0) throw new Error(errors.join('；'))
 
-    let paintIds = bookingData.paintIds || []
-    if (bookingData.paintPackageId) {
-      const pkg = paintPackageService.getPackageById(bookingData.paintPackageId)
-      if (pkg) {
-        paintIds = pkg.paintIds
-      }
-    }
+    const requiredPaintIds = paintService.getRequiredPaintIdsForCourse(bookingData.course)
 
     const bookings = storage.getBookings()
     const newBooking = {
@@ -386,8 +509,8 @@ export const bookingService = {
       date: bookingData.date,
       timeSlot: bookingData.timeSlot,
       course: bookingData.course,
-      paintPackageId: bookingData.paintPackageId || null,
-      paintIds: paintIds,
+      paintPackageId: null,
+      paintIds: requiredPaintIds,
       status: BOOKING_STATUS.BOOKED,
       workSubmitted: false,
       workId: null,

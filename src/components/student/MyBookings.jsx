@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext.jsx'
-import { bookingService, seatService, paintService, workService, paintPackageService } from '../../services/business.js'
+import { bookingService, seatService, paintService, workService } from '../../services/business.js'
 import {
   BOOKING_STATUS_TEXT,
   TIME_SLOTS,
@@ -10,7 +10,7 @@ import {
 } from '../../data/storage.js'
 
 export default function MyBookings() {
-  const { bookings, seats, paints, paintPackages, currentStudent, refreshBookings, refreshAll, showNotification } = useApp()
+  const { bookings, seats, paints, currentStudent, refreshBookings, refreshAll, showNotification } = useApp()
   const [editingBooking, setEditingBooking] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [submittingBooking, setSubmittingBooking] = useState(null)
@@ -32,7 +32,6 @@ export default function MyBookings() {
 
   const getSeat = (id) => seats.find(s => s.id === id)
   const getPaint = (id) => paints.find(p => p.id === id)
-  const getPackage = (id) => paintPackages.find(p => p.id === id)
 
   const handleCancel = (bookingId) => {
     if (!confirm('确定要取消此预约吗？')) return
@@ -68,8 +67,7 @@ export default function MyBookings() {
       timeSlot: booking.timeSlot,
       seatId: booking.seatId,
       course: booking.course,
-      paintPackageId: booking.paintPackageId || '',
-      paintIds: [...booking.paintIds],
+      paintIds: paintService.getRequiredPaintIdsForCourse(booking.course),
     })
   }
 
@@ -87,6 +85,25 @@ export default function MyBookings() {
       s.cleanStatus === CLEAN_STATUS.CLEANED &&
       !occupied.includes(s.id)
     )
+  }
+
+  const requiredPaintsForEdit = useMemo(() => {
+    if (!editForm) return []
+    return paintService.getRequiredPaintsForCourse(editForm.course)
+  }, [editForm, paints])
+
+  const requiredPaintStockIssuesForEdit = useMemo(() => {
+    if (!editForm) return []
+    return paintService.checkRequiredPaintsStock(editForm.course)
+  }, [editForm, paints])
+
+  const handleCourseChangeInEdit = (course) => {
+    if (!editForm) return
+    setEditForm({
+      ...editForm,
+      course,
+      paintIds: paintService.getRequiredPaintIdsForCourse(course),
+    })
   }
 
   const handleEditSubmit = (e) => {
@@ -133,31 +150,6 @@ export default function MyBookings() {
     }
   }
 
-  const handlePaintToggleInEdit = (paintId) => {
-    if (!editForm) return
-    const newIds = editForm.paintIds.includes(paintId)
-      ? editForm.paintIds.filter(id => id !== paintId)
-      : [...editForm.paintIds, paintId]
-    setEditForm({ ...editForm, paintIds: newIds, paintPackageId: '' })
-  }
-
-  const handlePackageSelectInEdit = (packageId) => {
-    if (!editForm) return
-    const pkg = paintPackages.find(p => p.id === packageId)
-    setEditForm({
-      ...editForm,
-      paintPackageId: packageId,
-      paintIds: pkg ? pkg.paintIds : [],
-    })
-  }
-
-  const availablePackagesForEdit = () => {
-    if (!editForm) return []
-    return paintPackages.filter(p =>
-      p.isActive && p.applicableCourses && p.applicableCourses.includes(editForm.course)
-    )
-  }
-
   return (
     <div className="module-container">
       <div className="module-header">
@@ -202,7 +194,6 @@ export default function MyBookings() {
           {filteredBookings.map(booking => {
             const seat = getSeat(booking.seatId)
             const bookingPaints = booking.paintIds.map(id => getPaint(id)).filter(Boolean)
-            const pkg = booking.paintPackageId ? getPackage(booking.paintPackageId) : null
             const canEdit = booking.status === BOOKING_STATUS.BOOKED && !booking.workSubmitted
             const canCancel = booking.status === BOOKING_STATUS.BOOKED && !booking.workSubmitted
             const canSubmitWork = booking.status === BOOKING_STATUS.COMPLETED && !booking.workSubmitted
@@ -221,12 +212,6 @@ export default function MyBookings() {
                     <div className="booking-seat">
                       💺 {seat ? `${seat.name}（${seat.location || '未设位置'}）` : '座位已删除'}
                     </div>
-                    {pkg && (
-                      <div className="booking-package">
-                        📦 {pkg.name}
-                        <span className="muted-text-sm">（套餐）</span>
-                      </div>
-                    )}
                   </div>
                   <div className="booking-status">
                     <span className={`tag tag-${booking.status}`}>
@@ -246,7 +231,7 @@ export default function MyBookings() {
 
                 {bookingPaints.length > 0 && (
                   <div className="booking-paints">
-                    <span className="muted-text-sm">🎨 颜料清单：</span>
+                    <span className="muted-text-sm">🎨 课程必需颜料：</span>
                     <div className="paint-tags">
                       {bookingPaints.map(paint => (
                         <span key={paint.id} className="paint-tag">
@@ -332,7 +317,7 @@ export default function MyBookings() {
 
       {editingBooking && editForm && (
         <div className="modal-overlay" onClick={handleCloseEdit}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>修改预约</h3>
               <button className="close-btn" onClick={handleCloseEdit}>×</button>
@@ -340,6 +325,16 @@ export default function MyBookings() {
             {editingBooking.workSubmitted && (
               <div className="alert alert-warning" style={{ margin: '16px' }}>
                 ⚠ 作品已提交，不能修改日期、时段和座位
+              </div>
+            )}
+            {requiredPaintStockIssuesForEdit.length > 0 && !editingBooking.workSubmitted && (
+              <div className="alert alert-danger" style={{ margin: '16px' }}>
+                <strong>⛔ 提示：</strong>修改后课程的必需颜料存在问题：
+                <ul style={{ margin: '8px 0 0 20px', padding: 0 }}>
+                  {requiredPaintStockIssuesForEdit.map((msg, idx) => (
+                    <li key={idx} style={{ marginBottom: '4px' }}>{msg}</li>
+                  ))}
+                </ul>
               </div>
             )}
             <form className="modal-body" onSubmit={handleEditSubmit}>
@@ -374,7 +369,7 @@ export default function MyBookings() {
                 <select
                   className="input"
                   value={editForm.course}
-                  onChange={e => setEditForm({ ...editForm, course: e.target.value })}
+                  onChange={e => handleCourseChangeInEdit(e.target.value)}
                 >
                   {COURSE_LIST.map(course => (
                     <option key={course} value={course}>{course}</option>
@@ -404,47 +399,40 @@ export default function MyBookings() {
               </div>
 
               <div className="form-group">
-                <label>颜料套餐</label>
-                <select
-                  className="input"
-                  value={editForm.paintPackageId || ''}
-                  onChange={e => handlePackageSelectInEdit(e.target.value)}
-                >
-                  <option value="">不使用套餐</option>
-                  {availablePackagesForEdit().map(pkg => (
-                    <option key={pkg.id} value={pkg.id}>
-                      {pkg.name} - ¥{pkg.price}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>自选颜料</label>
-                <div className="paint-tags-edit">
-                  {paints.map(paint => {
-                    const checked = editForm.paintIds.includes(paint.id)
-                    const disabled = paint.stock <= 0
-                    return (
-                      <label
-                        key={paint.id}
-                        className={`paint-check ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={disabled}
-                          onChange={() => !disabled && handlePaintToggleInEdit(paint.id)}
-                        />
-                        <span
-                          className="color-swatch-sm"
-                          style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
-                        />
-                        <span>{paint.name}</span>
-                        {disabled && <span className="muted-text-sm">（缺货）</span>}
-                      </label>
-                    )
-                  })}
+                <label>
+                  🎨 课程必需颜料清单
+                  <span className="muted-text" style={{ marginLeft: '8px' }}>
+                    （系统自动分配，共 {requiredPaintsForEdit.length} 种）
+                  </span>
+                </label>
+                <div className="required-paints-box">
+                  {requiredPaintsForEdit.length === 0 ? (
+                    <div className="empty-hint">该课程暂未配置必需颜料，请联系管理员</div>
+                  ) : (
+                    <div className="paint-tags paint-tags-required">
+                      {requiredPaintsForEdit.map(paint => {
+                        const isLow = paint.stock <= paint.threshold
+                        const isOut = paint.stock <= 0
+                        return (
+                          <span
+                            key={paint.id}
+                            className={`paint-tag paint-tag-required ${isOut ? 'tag-danger' : isLow ? 'tag-warning' : ''}`}
+                          >
+                            <span
+                              className="paint-tag-color"
+                              style={{ backgroundColor: paint.color, border: '1px solid #ddd' }}
+                            />
+                            <strong>{paint.name}</strong>
+                            <span className="paint-tag-stock">
+                              库存：{paint.stock}{paint.unit}
+                              {isOut && ' ❌缺货'}
+                              {!isOut && isLow && ' ⚠不足'}
+                            </span>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -452,8 +440,12 @@ export default function MyBookings() {
                 <button type="button" className="btn btn-secondary" onClick={handleCloseEdit}>
                   取消
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  保存修改
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={requiredPaintStockIssuesForEdit.length > 0 && !editingBooking.workSubmitted}
+                >
+                  {requiredPaintStockIssuesForEdit.length > 0 ? '必需颜料库存不足，无法保存' : '保存修改'}
                 </button>
               </div>
             </form>
